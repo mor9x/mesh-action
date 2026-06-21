@@ -41,7 +41,7 @@ MeshAction can use the public SuiMesh testnet relay and the public trace package
 
 ```bash
 SUIMESH_RELAYER_URL=https://relay.suimesh.link
-SUIMESH_TRACE_PACKAGE_ID=0x038caadb65def30619e6ec762715ea6ca232ac1195bc077086bc9a6b7e11bb80
+SUIMESH_TRACE_PACKAGE_ID=0xd9cdc0dad1bf458037c385656b891d29e63896945e9c9e38eb5d811ae7978257
 ```
 
 The trace registry is different: it is a platform-owned execution ledger. The current SuiMesh trace contract only lets the registry owner call `anchor_action`, so a production MeshAction deployment must use a registry owned by the MeshAction runtime signer or by an explicitly authorized platform operator.
@@ -109,7 +109,7 @@ DATABASE_URL=postgresql://admin:admin@127.0.0.1:5432/admin
 SUIMESH_SUI_NETWORK=testnet
 SUIMESH_PROTOCOL_MODE=canonical
 SUIMESH_RELAYER_URL=https://relay.suimesh.link
-SUIMESH_TRACE_PACKAGE_ID=0x038caadb65def30619e6ec762715ea6ca232ac1195bc077086bc9a6b7e11bb80
+SUIMESH_TRACE_PACKAGE_ID=0xd9cdc0dad1bf458037c385656b891d29e63896945e9c9e38eb5d811ae7978257
 SUIMESH_TRACE_REGISTRY_ID=0x_YOUR_MESHACTION_TRACE_REGISTRY_ID
 SUIMESH_SUI_PRIVATE_KEY=suiprivkey...
 SUIMESH_SUI_ADDRESS=0x...
@@ -169,7 +169,7 @@ Use the public relay and trace package for live testnet runs:
 ```bash
 SUIMESH_PROTOCOL_MODE=canonical
 SUIMESH_RELAYER_URL=https://relay.suimesh.link
-SUIMESH_TRACE_PACKAGE_ID=0x038caadb65def30619e6ec762715ea6ca232ac1195bc077086bc9a6b7e11bb80
+SUIMESH_TRACE_PACKAGE_ID=0xd9cdc0dad1bf458037c385656b891d29e63896945e9c9e38eb5d811ae7978257
 SUIMESH_TRACE_REGISTRY_ID=0x_YOUR_MESHACTION_TRACE_REGISTRY_ID
 ```
 
@@ -298,7 +298,7 @@ MESHACTION_SMOKE_BYO_PORT=4024 \
 SUIMESH_SUI_NETWORK=testnet \
 SUIMESH_PROTOCOL_MODE=canonical \
 SUIMESH_RELAYER_URL=https://relay.suimesh.link \
-SUIMESH_TRACE_PACKAGE_ID=0x038caadb65def30619e6ec762715ea6ca232ac1195bc077086bc9a6b7e11bb80 \
+SUIMESH_TRACE_PACKAGE_ID=0xd9cdc0dad1bf458037c385656b891d29e63896945e9c9e38eb5d811ae7978257 \
 SUIMESH_TRACE_REGISTRY_ID=0x_YOUR_MESHACTION_TRACE_REGISTRY_ID \
 SUIMESH_ALLOW_INSECURE_BYO_HTTP=true \
 SUIMESH_ALLOW_LOCAL_BYO_ENDPOINTS=true \

@@ -23,7 +23,7 @@ import {
 
 const DEFAULT_RELAYER_URL = "https://relay.suimesh.link";
 const DEFAULT_TRACE_PACKAGE_ID =
-  "0x038caadb65def30619e6ec762715ea6ca232ac1195bc077086bc9a6b7e11bb80";
+  "0xd9cdc0dad1bf458037c385656b891d29e63896945e9c9e38eb5d811ae7978257";
 const TESTNET_OPEN_SEAL_SERVER_CONFIGS = [
   {
     objectId:
