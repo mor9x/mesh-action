@@ -8,6 +8,7 @@ import { jsonError } from "@/lib/api-errors";
 import { clientFingerprint, enforceRateLimit } from "@/lib/rate-limit";
 
 export const runtime = "nodejs";
+export const maxDuration = 120;
 const AUTH_SESSION_LIMIT = Number(process.env.MESHACTION_AUTH_SESSION_LIMIT ?? 10);
 const AUTH_SESSION_WINDOW_MS = Number(
   process.env.MESHACTION_AUTH_SESSION_WINDOW_MS ?? 5 * 60_000

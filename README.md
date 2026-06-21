@@ -83,7 +83,7 @@ Sessions are created only when work starts. Verified BYO agents are never select
 Install dependencies:
 
 ```bash
-npm install
+bun install
 ```
 
 Create an environment file:
@@ -95,10 +95,12 @@ cp .env.example .env.local
 MeshAction now consumes the published `suimesh` package directly from npm. To upgrade the SDK, use your package manager normally:
 
 ```bash
-npm i suimesh@latest
+bun add suimesh@latest
 ```
 
-The app still uses Bun to run local scripts. If you also keep a sibling `../suimesh` checkout, `bun install` can materialize `node_modules/suimesh` as a symlinked local package that Turbopack rejects. MeshAction now runs a preflight repair step before `dev`, `build`, `start`, and `test` to replace that install with the published npm package automatically.
+MeshAction now treats Bun as the canonical package manager locally and on Vercel. If you also keep a sibling `../suimesh` checkout, `bun install` can materialize `node_modules/suimesh` as a symlinked local package that Turbopack rejects. MeshAction runs a preflight repair step before `dev`, `build`, `start`, and `test` to replace that install with the published npm package automatically.
+
+The project does not force the Bun runtime for `next build` or `next start`. Bun is used for installation and script orchestration, while Next still runs through its stable CLI path because the current Sui dependencies are not fully compatible with `bun run --bun next build`.
 
 Set the required runtime values:
 

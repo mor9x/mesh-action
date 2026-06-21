@@ -3,6 +3,7 @@ import { jsonError } from "@/lib/api-errors";
 import { requireAuth } from "@/lib/auth";
 
 export const runtime = "nodejs";
+export const maxDuration = 120;
 
 export async function GET() {
   try {

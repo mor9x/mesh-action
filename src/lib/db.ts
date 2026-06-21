@@ -1,11 +1,8 @@
-import { readdir, readFile } from "node:fs/promises";
-import path from "node:path";
-
 import { Pool, type PoolClient, type QueryResult, type QueryResultRow } from "pg";
+import { MIGRATIONS } from "@/lib/migration-files";
 
 let pool: Pool | undefined;
 let schemaReady: Promise<void> | undefined;
-const MIGRATIONS_DIR = path.join(process.cwd(), "db", "migrations");
 const MIGRATIONS_TABLE = "meshaction_schema_migrations";
 
 function databaseUrl() {
@@ -49,19 +46,16 @@ async function runMigrations() {
     )
   `);
 
-  const files = (await readdir(MIGRATIONS_DIR))
-    .filter((entry) => entry.endsWith(".sql"))
-    .sort((left, right) => left.localeCompare(right));
   const appliedResult = await db.query<{ filename: string }>(
     `select filename from ${MIGRATIONS_TABLE}`
   );
   const applied = new Set(appliedResult.rows.map((row) => row.filename));
 
-  for (const filename of files) {
+  for (const migration of MIGRATIONS) {
+    const { filename, sql } = migration;
     if (applied.has(filename)) {
       continue;
     }
-    const sql = await readFile(path.join(MIGRATIONS_DIR, filename), "utf8");
     const client = await db.connect();
     try {
       await client.query("begin");

@@ -2,6 +2,7 @@ import { assertSameOrigin, clearAuthCookie } from "@/lib/auth";
 import { jsonError } from "@/lib/api-errors";
 
 export const runtime = "nodejs";
+export const maxDuration = 120;
 
 export async function POST(request: Request) {
   try {

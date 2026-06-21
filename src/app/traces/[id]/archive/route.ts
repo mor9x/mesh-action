@@ -3,6 +3,7 @@ import { requireAuth } from "@/lib/auth";
 import { jsonError } from "@/lib/api-errors";
 
 export const runtime = "nodejs";
+export const maxDuration = 120;
 
 type Params = { params: Promise<{ id: string }> };
 

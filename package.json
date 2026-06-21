@@ -2,6 +2,7 @@
   "name": "meshaction",
   "version": "0.1.0",
   "private": true,
+  "packageManager": "bun@1.3.14",
   "scripts": {
     "suimesh:repair-install": "bun scripts/repair-suimesh-install.ts",
     "dev": "next dev",

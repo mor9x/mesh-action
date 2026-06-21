@@ -9,6 +9,7 @@ import {
 } from "@/lib/suimesh-data";
 
 export const runtime = "nodejs";
+export const maxDuration = 120;
 const AGENT_REGISTRATION_LIMIT = Number(
   process.env.MESHACTION_AGENT_REGISTRATION_LIMIT ?? 8
 );
