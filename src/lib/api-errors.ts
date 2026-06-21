@@ -54,12 +54,22 @@ export function statusForError(error: unknown) {
     return 409;
   }
   if (
+    message.includes("rate limit") ||
+    message.includes("too many requests") ||
+    message.includes("retry later")
+  ) {
+    return 429;
+  }
+  if (
     message.includes("econnrefused") ||
     message.includes("database") ||
     message.includes("missing sui signer") ||
     message.includes("sui signer is not configured") ||
+    message.includes("runtime signer unavailable") ||
     message.includes("suimesh_sui_private_key") ||
     message.includes("suimesh_sui_keystore_entry") ||
+    message.includes("suimesh_trace_registry_id") ||
+    message.includes("trace registry") ||
     message.includes("fetch failed")
   ) {
     return 503;

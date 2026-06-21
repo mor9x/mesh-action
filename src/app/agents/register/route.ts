@@ -1,6 +1,7 @@
 import { registerAgent } from "@/lib/suimesh-service";
 import { jsonError } from "@/lib/api-errors";
 import { assertSameOrigin, requireAuth } from "@/lib/auth";
+import { clientFingerprint, enforceRateLimit } from "@/lib/rate-limit";
 import {
   isActionType,
   type ActionType,
@@ -8,6 +9,12 @@ import {
 } from "@/lib/suimesh-data";
 
 export const runtime = "nodejs";
+const AGENT_REGISTRATION_LIMIT = Number(
+  process.env.MESHACTION_AGENT_REGISTRATION_LIMIT ?? 8
+);
+const AGENT_REGISTRATION_WINDOW_MS = Number(
+  process.env.MESHACTION_AGENT_REGISTRATION_WINDOW_MS ?? 10 * 60_000
+);
 
 export async function POST(request: Request) {
   try {
@@ -72,6 +79,12 @@ export async function POST(request: Request) {
   };
 
   try {
+    await enforceRateLimit({
+      bucket: "agent_registration",
+      subject: `${user.user_id}:${clientFingerprint(request)}`,
+      limit: AGENT_REGISTRATION_LIMIT,
+      windowMs: AGENT_REGISTRATION_WINDOW_MS,
+    });
     const registered = await registerAgent(manifest, {
       signature: body.registration_signature,
       signedAtMs: body.signed_at_ms,

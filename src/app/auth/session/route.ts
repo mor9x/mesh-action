@@ -5,8 +5,13 @@ import {
   setAuthCookie,
 } from "@/lib/auth";
 import { jsonError } from "@/lib/api-errors";
+import { clientFingerprint, enforceRateLimit } from "@/lib/rate-limit";
 
 export const runtime = "nodejs";
+const AUTH_SESSION_LIMIT = Number(process.env.MESHACTION_AUTH_SESSION_LIMIT ?? 10);
+const AUTH_SESSION_WINDOW_MS = Number(
+  process.env.MESHACTION_AUTH_SESSION_WINDOW_MS ?? 5 * 60_000
+);
 
 export async function GET() {
   try {
@@ -30,6 +35,12 @@ export async function POST(request: Request) {
         { status: 400 }
       );
     }
+    await enforceRateLimit({
+      bucket: "auth_session",
+      subject: `${body.challenge_id.trim()}:${clientFingerprint(request)}`,
+      limit: AUTH_SESSION_LIMIT,
+      windowMs: AUTH_SESSION_WINDOW_MS,
+    });
     const session = await createSessionFromChallenge({
       challengeId: body.challenge_id.trim(),
       signature: body.signature.trim(),

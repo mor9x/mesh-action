@@ -20,8 +20,7 @@
       }
     ],
     "paths": {
-      "@/*": ["./src/*"],
-      "@suimesh/sdk": ["./.suimesh-sdk/src/index.ts"]
+      "@/*": ["./src/*"]
     }
   },
   "include": [

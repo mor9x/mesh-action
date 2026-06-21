@@ -1,5 +1,6 @@
 import { createServer } from "node:http";
 import { readFileSync } from "node:fs";
+import type { Socket } from "node:net";
 import { homedir } from "node:os";
 import { join } from "node:path";
 
@@ -13,8 +14,11 @@ import {
   buildSuiDemoMoveCallPtbBytes,
   buildSuiTransferPtbBytes,
 } from "@/lib/sui-executor";
+import { loadLocalEnv } from "./load-env";
 
 const { Pool } = pg;
+
+loadLocalEnv();
 
 const BASE_URL = process.env.MESHACTION_SMOKE_BASE_URL ?? "http://localhost:3000";
 const DATABASE_URL =
@@ -45,10 +49,13 @@ function assert(condition: unknown, message: string, details?: unknown): asserts
 }
 
 function runtimeKeypair() {
+  const expectedAddress =
+    process.env.MESHACTION_SMOKE_WALLET_ADDRESS ??
+    process.env.SUIMESH_SUI_ADDRESS;
   const envEntry =
     process.env.MESHACTION_SMOKE_KEYSTORE_ENTRY ??
     process.env.SUIMESH_SUI_KEYSTORE_ENTRY;
-  const entry = envEntry ?? cliKeystoreEntry();
+  const entry = envEntry ?? cliKeystoreEntry(expectedAddress);
   const bytes = Buffer.from(entry, "base64");
   if (bytes[0] !== 0) {
     throw new Error(`unsupported Sui CLI key scheme ${bytes[0]}`);
@@ -56,15 +63,38 @@ function runtimeKeypair() {
   return Ed25519Keypair.fromSecretKey(bytes.slice(1));
 }
 
-function cliKeystoreEntry() {
-  const entries = JSON.parse(
-    readFileSync(join(homedir(), ".sui/sui_config/sui.keystore"), "utf8")
-  ) as string[];
-  const entry = entries[0];
-  if (!entry) {
-    throw new Error("No Sui CLI keystore entry found");
+function cliKeystoreEntry(expectedAddress?: string) {
+  const candidates = [
+    join(process.cwd(), ".sui/sui.keystore"),
+    join(homedir(), ".sui/sui_config/sui.keystore"),
+  ];
+
+  for (const file of candidates) {
+    try {
+      const entries = JSON.parse(readFileSync(file, "utf8")) as string[];
+      if (expectedAddress) {
+        const normalized = expectedAddress.toLowerCase();
+        for (const entry of entries) {
+          const bytes = Buffer.from(entry, "base64");
+          if (bytes[0] !== 0) {
+            continue;
+          }
+          const keypair = Ed25519Keypair.fromSecretKey(bytes.slice(1));
+          if (keypair.getPublicKey().toSuiAddress().toLowerCase() === normalized) {
+            return entry;
+          }
+        }
+      }
+      const entry = entries[0];
+      if (entry) {
+        return entry;
+      }
+    } catch {
+      continue;
+    }
   }
-  return entry;
+
+  throw new Error("No Sui CLI keystore entry found");
 }
 
 async function request<T>(path: string, options: RequestOptions = {}) {
@@ -440,10 +470,11 @@ async function actionPtbBytes(input: {
 async function main() {
   const byoKeypair = new Ed25519Keypair();
   let byoInvocations = 0;
+  const sockets = new Set<Socket>();
   const server = createServer(async (request, response) => {
     try {
       if (request.method !== "POST" || request.url !== "/suimesh") {
-        response.writeHead(404).end("not found");
+        response.writeHead(404, { connection: "close" }).end("not found");
         return;
       }
       const chunks: Buffer[] = [];
@@ -470,7 +501,10 @@ async function main() {
         sourceTraceId:
           body.context_refs?.source_trace_id ?? body.challenge?.sourceTraceId,
       });
-      response.writeHead(200, { "content-type": "application/json" });
+      response.writeHead(200, {
+        "content-type": "application/json",
+        connection: "close",
+      });
       response.end(
         JSON.stringify({
           proposal: `Signed ${semanticType} PTB from Full BYO Smoke Agent.`,
@@ -480,9 +514,18 @@ async function main() {
         })
       );
     } catch (error) {
-      response.writeHead(500, { "content-type": "text/plain" });
+      response.writeHead(500, {
+        "content-type": "text/plain",
+        connection: "close",
+      });
       response.end(error instanceof Error ? error.stack ?? error.message : String(error));
     }
+  });
+  server.on("connection", (socket) => {
+    sockets.add(socket);
+    socket.on("close", () => {
+      sockets.delete(socket);
+    });
   });
 
   await new Promise<void>((resolve) => server.listen(SMOKE_PORT, "127.0.0.1", resolve));
@@ -540,6 +583,9 @@ async function main() {
       )
     );
   } finally {
+    for (const socket of sockets) {
+      socket.destroy();
+    }
     await new Promise<void>((resolve) => server.close(() => resolve()));
     await pool.end();
   }

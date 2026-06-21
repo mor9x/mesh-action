@@ -7,7 +7,7 @@ import {
   WalrusStorageAdapter,
   type ContextRef,
   type StorageAdapter,
-} from "@suimesh/sdk";
+} from "suimesh";
 
 import { PgStorageAdapter } from "@/lib/pg-suimesh-adapters";
 import {

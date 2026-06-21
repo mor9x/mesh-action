@@ -8,8 +8,8 @@ import type {
   StorageAdapter,
   TraceGuard,
   PolicyDecision,
-} from "@suimesh/sdk";
-import { hashBytes, hashJson } from "@suimesh/sdk";
+} from "suimesh";
+import { hashBytes, hashJson } from "suimesh";
 import { query, withTransaction } from "@/lib/db";
 
 const DEFAULT_ACTION_TTL_MS = 10 * 60_000;

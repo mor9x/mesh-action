@@ -6,7 +6,7 @@ import { bcs } from "@mysten/sui/bcs";
 import { Ed25519Keypair } from "@mysten/sui/keypairs/ed25519";
 import { Transaction } from "@mysten/sui/transactions";
 
-import type { SimulationResult } from "@suimesh/sdk";
+import type { SimulationResult } from "suimesh";
 
 export const SUI_DEMO_PACKAGE_ID =
   "0xdeb6325f80800c0f58d99d28b06a65f4b02adccc3275bd375e144e000bfc6bdd";
@@ -50,6 +50,56 @@ function positiveNumberEnv(name: string, fallback: number) {
   }
   const parsed = Number(raw);
   return Number.isFinite(parsed) && parsed > 0 ? parsed : fallback;
+}
+
+function transientRpcAttempts() {
+  return positiveNumberEnv("SUIMESH_SUI_RPC_RETRY_ATTEMPTS", 3);
+}
+
+function transientRpcDelayMs() {
+  return positiveNumberEnv("SUIMESH_SUI_RPC_RETRY_DELAY_MS", 1_500);
+}
+
+function transientRpcError(error: unknown) {
+  if (!(error instanceof Error)) {
+    return false;
+  }
+  const message = error.message.toLowerCase();
+  return (
+    message.includes("fetch failed") ||
+    message.includes("network") ||
+    message.includes("timeout") ||
+    message.includes("socket") ||
+    message.includes("econnreset") ||
+    message.includes("enotfound") ||
+    message.includes("temporarily unavailable")
+  );
+}
+
+async function withTransientRpcRetry<T>(
+  label: string,
+  action: () => Promise<T>
+): Promise<T> {
+  const attempts = transientRpcAttempts();
+  let lastError: unknown;
+  for (let attempt = 1; attempt <= attempts; attempt += 1) {
+    try {
+      return await action();
+    } catch (error) {
+      lastError = error;
+      if (attempt >= attempts || !transientRpcError(error)) {
+        throw error;
+      }
+      await new Promise((resolve) =>
+        setTimeout(resolve, transientRpcDelayMs() * attempt)
+      );
+    }
+  }
+  throw new Error(
+    `${label} failed after ${attempts} attempts: ${
+      lastError instanceof Error ? lastError.message : String(lastError)
+    }`
+  );
 }
 
 function keypairFromCliKeystoreEntry(entry: string) {
@@ -160,16 +210,20 @@ async function signAndExecute(tx: Transaction): Promise<ExecuteResult> {
   tx.setSender(runtime.address);
   tx.setGasBudget(50_000_000);
 
-  const response = await runtime.client.signAndExecuteTransaction({
-    transaction: tx,
-    signer: runtime.keypair,
-    options: {
-      showEffects: true,
-      showEvents: true,
-      showObjectChanges: true,
-      showBalanceChanges: true,
-    },
-  });
+  const response = await withTransientRpcRetry(
+    "signAndExecuteTransaction",
+    () =>
+      runtime.client.signAndExecuteTransaction({
+        transaction: tx,
+        signer: runtime.keypair,
+        options: {
+          showEffects: true,
+          showEvents: true,
+          showObjectChanges: true,
+          showBalanceChanges: true,
+        },
+      })
+  );
 
   const status = response.effects?.status;
   if (status?.status !== "success") {
@@ -180,17 +234,19 @@ async function signAndExecute(tx: Transaction): Promise<ExecuteResult> {
     );
   }
 
-  await runtime.client.waitForTransaction({
-    digest: response.digest,
-    timeout: positiveNumberEnv("SUIMESH_SUI_WAIT_TIMEOUT_MS", 60_000),
-    pollInterval: positiveNumberEnv("SUIMESH_SUI_WAIT_POLL_INTERVAL_MS", 1_000),
-    options: {
-      showEffects: true,
-      showEvents: true,
-      showObjectChanges: true,
-      showBalanceChanges: true,
-    },
-  });
+  await withTransientRpcRetry("waitForTransaction", () =>
+    runtime.client.waitForTransaction({
+      digest: response.digest,
+      timeout: positiveNumberEnv("SUIMESH_SUI_WAIT_TIMEOUT_MS", 60_000),
+      pollInterval: positiveNumberEnv("SUIMESH_SUI_WAIT_POLL_INTERVAL_MS", 1_000),
+      options: {
+        showEffects: true,
+        showEvents: true,
+        showObjectChanges: true,
+        showBalanceChanges: true,
+      },
+    })
+  );
 
   return {
     txDigest: response.digest,
@@ -275,10 +331,12 @@ export async function devInspectSuiPtb(input: {
   sender?: string;
 }): Promise<SimulationResult> {
   const runtime = getRuntimeSigner();
-  const response = await runtime.client.devInspectTransactionBlock({
-    sender: input.sender ?? runtime.address,
-    transactionBlock: Transaction.fromKind(input.ptbBytes),
-  });
+  const response = await withTransientRpcRetry("devInspectTransactionBlock", () =>
+    runtime.client.devInspectTransactionBlock({
+      sender: input.sender ?? runtime.address,
+      transactionBlock: Transaction.fromKind(input.ptbBytes),
+    })
+  );
   const status = response.effects.status;
   return {
     ok: status.status === "success",

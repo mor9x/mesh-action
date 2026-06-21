@@ -2,7 +2,7 @@ import type {
   JsonValue,
   PtbInspectionResult,
   SuiPtbAction,
-} from "@suimesh/sdk";
+} from "suimesh";
 import { ProxyAgent, request as undiciRequest, type Dispatcher } from "undici";
 
 import type { ActionType } from "@/lib/suimesh-data";
@@ -16,6 +16,19 @@ type CopySourceContext = {
   sourceActionHash: string;
   sourcePtbHash?: string;
   status?: string;
+};
+
+export type HostedAgentMode = "llm" | "deterministic";
+export type HostedAgentRuntimeStatus = {
+  mode: HostedAgentMode;
+  enabled: boolean;
+  requested: boolean;
+  configured: boolean;
+  provider?: string;
+  model?: string;
+  baseUrl?: string;
+  reason: string;
+  errors: string[];
 };
 
 export type HostedProposalAgentResult = {
@@ -50,6 +63,32 @@ export function hostedLlmAgentsEnabled() {
     llmAgentsEnabledFlag() &&
     Boolean(llmApiKey())
   );
+}
+
+export function getHostedAgentRuntimeStatus(): HostedAgentRuntimeStatus {
+  const requested = llmAgentsEnabledFlag();
+  const configured = Boolean(llmApiKey());
+  const enabled = requested && configured;
+  const errors: string[] = [];
+  if (requested && !configured) {
+    errors.push("MESHACTION_LLM_API_KEY is required when MESHACTION_LLM_AGENTS=true");
+  }
+
+  return {
+    mode: enabled ? "llm" : "deterministic",
+    enabled,
+    requested,
+    configured,
+    provider: enabled ? llmProvider() : undefined,
+    model: enabled ? llmModel() : undefined,
+    baseUrl: enabled ? llmBaseUrl() : undefined,
+    reason: enabled
+      ? `Hosted agents use ${llmProvider()} ${llmModel()}.`
+      : requested
+        ? "LLM agents were requested but no API key is configured. Using deterministic fallback."
+        : "Hosted agents are using deterministic fallback because MESHACTION_LLM_AGENTS is not enabled.",
+    errors,
+  };
 }
 
 export async function runHostedProposalAgent(input: {

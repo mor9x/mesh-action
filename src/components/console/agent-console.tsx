@@ -231,6 +231,18 @@ type RuntimeStatus = {
   errors: string[];
 };
 
+type HostedAgentRuntimeStatus = {
+  mode: "llm" | "deterministic";
+  enabled: boolean;
+  requested: boolean;
+  configured: boolean;
+  provider?: string;
+  model?: string;
+  baseUrl?: string;
+  reason: string;
+  errors: string[];
+};
+
 type ProtocolStatus = {
   mode: "canonical" | "pg";
   canonical: boolean;
@@ -253,6 +265,7 @@ type ProtocolStatus = {
 };
 
 type RuntimeStatusApiResponse = {
+  hostedAgents?: HostedAgentRuntimeStatus;
   runtime: RuntimeStatus;
   protocol?: ProtocolStatus;
 };
@@ -449,6 +462,7 @@ export function AgentConsole() {
   const [registryError, setRegistryError] = useState<string>();
   const [sessionError, setSessionError] = useState<string>();
   const [sessionIndex, setSessionIndex] = useState<SessionIndexItem[]>([]);
+  const [hostedAgentStatus, setHostedAgentStatus] = useState<HostedAgentRuntimeStatus>();
   const [runtimeStatus, setRuntimeStatus] = useState<RuntimeStatus>();
   const [protocolStatus, setProtocolStatus] = useState<ProtocolStatus>();
   const [runtimeStatusError, setRuntimeStatusError] = useState<string>();
@@ -562,10 +576,12 @@ export function AgentConsole() {
   const loadRuntimeStatus = useCallback(async () => {
     try {
       const response = await getJson<RuntimeStatusApiResponse>("/runtime/status");
+      setHostedAgentStatus(response.hostedAgents);
       setRuntimeStatus(response.runtime);
       setProtocolStatus(response.protocol);
       setRuntimeStatusError(undefined);
     } catch (error) {
+      setHostedAgentStatus(undefined);
       setRuntimeStatus(undefined);
       setProtocolStatus(undefined);
       setRuntimeStatusError(
@@ -1176,11 +1192,29 @@ export function AgentConsole() {
         />
 
         {!authUser ? (
-          <WalletSignInPanel
-            authLoading={authLoading}
-            authError={authError}
-            onSignedIn={handleSignedIn}
-          />
+          <>
+            <WalletSignInPanel
+              authLoading={authLoading}
+              authError={authError}
+              onSignedIn={handleSignedIn}
+            />
+            {selectedNodeId === "node_executor" ? (
+              <div className="px-2 pb-4 lg:px-0">
+                <InspectorPanel
+                  action={activeAction}
+                  node={selectedNode}
+                  executed={executed}
+                  runtimeTrace={runtimeTrace}
+                  agents={registryAgents}
+                  hostedAgentStatus={hostedAgentStatus}
+                  runtimeStatus={runtimeStatus}
+                  protocolStatus={protocolStatus}
+                  runtimeStatusError={runtimeStatusError}
+                  className="mx-auto w-full max-w-2xl"
+                />
+              </div>
+            ) : null}
+          </>
         ) : (
         <div className="grid flex-1 grid-cols-1 gap-3 lg:grid-cols-[280px_minmax(0,1fr)] xl:grid-cols-[280px_minmax(0,1fr)_340px]">
           <LeftRail
@@ -1230,10 +1264,30 @@ export function AgentConsole() {
                     >
                       {activeDefinition.semantic_type}
                     </Badge>
+                    {hostedAgentStatus ? (
+                      <Badge
+                        variant="outline"
+                        className={cn(
+                          "font-mono text-[11px]",
+                          hostedAgentStatus.mode === "llm"
+                            ? "border-emerald-200 bg-emerald-50 text-emerald-700"
+                            : "border-amber-200 bg-amber-50 text-amber-700"
+                        )}
+                      >
+                        {hostedAgentStatus.mode === "llm"
+                          ? `hosted:${hostedAgentStatus.model ?? "llm"}`
+                          : "hosted:deterministic"}
+                      </Badge>
+                    ) : null}
                   </div>
                   <p className="mt-1 max-w-3xl text-sm leading-6 text-slate-600">
                     {activeDefinition.objective}
                   </p>
+                  {hostedAgentStatus ? (
+                    <p className="mt-2 max-w-3xl text-xs leading-5 text-slate-500">
+                      {hostedAgentStatus.reason}
+                    </p>
+                  ) : null}
                   <p className="mt-2 break-all font-mono text-[11px] text-slate-500">
                     {activeTraceId}
                   </p>
@@ -1394,6 +1448,7 @@ export function AgentConsole() {
             executed={executed}
             runtimeTrace={runtimeTrace}
             agents={registryAgents}
+            hostedAgentStatus={hostedAgentStatus}
             runtimeStatus={runtimeStatus}
             protocolStatus={protocolStatus}
             runtimeStatusError={runtimeStatusError}
@@ -2848,6 +2903,7 @@ function InspectorPanel({
   executed,
   runtimeTrace,
   agents,
+  hostedAgentStatus,
   runtimeStatus,
   protocolStatus,
   runtimeStatusError,
@@ -2858,6 +2914,7 @@ function InspectorPanel({
   executed: boolean;
   runtimeTrace?: RuntimeTrace;
   agents: AgentManifest[];
+  hostedAgentStatus?: HostedAgentRuntimeStatus;
   runtimeStatus?: RuntimeStatus;
   protocolStatus?: ProtocolStatus;
   runtimeStatusError?: string;
@@ -3001,6 +3058,18 @@ function InspectorPanel({
                   value={runtimeStatus?.demoPackageId ?? "unknown"}
                 />
                 <InspectorRow
+                  label="Hosted agents"
+                  value={
+                    hostedAgentStatus
+                      ? hostedAgentStatus.mode === "llm"
+                        ? hostedAgentStatus.model
+                          ? `${hostedAgentStatus.provider ?? "llm"} / ${hostedAgentStatus.model}`
+                          : hostedAgentStatus.provider ?? "llm"
+                        : "deterministic fallback"
+                      : "unknown"
+                  }
+                />
+                <InspectorRow
                   label="Protocol"
                   value={
                     protocolStatus
@@ -3042,6 +3111,9 @@ function InspectorPanel({
                       "runtime status unavailable"
                     }
                   />
+                ) : null}
+                {hostedAgentStatus?.mode === "deterministic" ? (
+                  <CodeLine icon={Bot} text={hostedAgentStatus.reason} />
                 ) : null}
               </CardContent>
             </Card>

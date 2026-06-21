@@ -24,7 +24,7 @@ import {
   type PtbInspectionResult,
   type SuiMeshClient,
   type SuiPtbAction,
-} from "@suimesh/sdk";
+} from "suimesh";
 
 import { query } from "@/lib/db";
 import {
@@ -47,6 +47,7 @@ import {
   ensureProtocolSessionGroup,
 } from "@/lib/suimesh-canonical";
 import {
+  getHostedAgentRuntimeStatus,
   runHostedAuditAgent,
   runHostedProposalAgent,
   type HostedAuditAgentResult,
@@ -392,15 +393,6 @@ async function ensureSession(
   ownerUserId: string
 ) {
   const existing = await assertSessionOwner(sessionId, ownerUserId);
-  const protocolMetadata = await ensureProtocolSessionGroup({
-    sessionId,
-    name: `MeshAction ${actionType} ${sessionId}`,
-    existingMetadata: existing?.metadata,
-  });
-  const metadata = {
-    ...(existing?.metadata ?? {}),
-    ...(protocolMetadata ?? {}),
-  };
   await query(
     `
       insert into suimesh_sessions (session_id, owner_user_id, semantic_type, status, metadata)
@@ -410,7 +402,26 @@ async function ensureSession(
           metadata = suimesh_sessions.metadata || excluded.metadata,
           updated_at = now()
     `,
-    [sessionId, ownerUserId, actionType, JSON.stringify(metadata)]
+    [sessionId, ownerUserId, actionType, JSON.stringify(existing?.metadata ?? {})]
+  );
+
+  const current = await getSession(sessionId);
+  const protocolMetadata = await ensureProtocolSessionGroup({
+    sessionId,
+    name: `MeshAction ${actionType} ${sessionId}`,
+    existingMetadata: current?.metadata,
+  });
+  if (!protocolMetadata) {
+    return;
+  }
+  await query(
+    `
+      update suimesh_sessions
+      set metadata = metadata || $2::jsonb,
+          updated_at = now()
+      where session_id = $1
+    `,
+    [sessionId, JSON.stringify(protocolMetadata)]
   );
 }
 
@@ -1188,6 +1199,24 @@ function statusFromDecision(decision: PolicyDecision): string {
   return decision.decision === "rejected" ? "policy_rejected" : "requires_confirmation";
 }
 
+function claimReusableByExecutor(
+  claim: ActionClaim | null | undefined,
+  executorAddress: string
+) {
+  if (
+    !claim ||
+    claim.claimed !== true ||
+    claim.duplicate === true ||
+    typeof claim.claimant !== "string" ||
+    claim.claimant.toLowerCase() !== executorAddress.toLowerCase()
+  ) {
+    return false;
+  }
+  return (
+    typeof claim.claimExpiresAtMs !== "number" || claim.claimExpiresAtMs > Date.now()
+  );
+}
+
 function nodeStatusFor(nodeId: string, run?: TraceRunRow): NodeStatus | undefined {
   if (!run) {
     return undefined;
@@ -1954,6 +1983,7 @@ export async function proposeTrace(input: {
   if (hostedAudit?.decision === "rejected") {
     throw new Error(`MeshAction audit agent rejected proposal: ${hostedAudit.rationale}`);
   }
+  const hostedRuntime = getHostedAgentRuntimeStatus();
 
   await upsertRun({
     traceId: input.traceId,
@@ -1974,23 +2004,25 @@ export async function proposeTrace(input: {
       sdk_semantic_type: plan.sdkSemanticType,
       proposal: plan.proposal,
       source: copySource,
-      hosted_agents: hostedProposal
-        ? {
-            proposal_agent: {
+      hosted_agents: {
+        mode: hostedRuntime.mode,
+        reason: hostedRuntime.reason,
+        proposal_agent: hostedProposal
+          ? {
               agent_id: actors.meshactionProposalAgent.id,
               model: hostedProposal.model,
               summary: hostedProposal.summary,
-            },
-            audit_agent: hostedAudit
-              ? {
-                  agent_id: actors.meshactionAuditAgent.id,
-                  model: hostedAudit.model,
-                  decision: hostedAudit.decision,
-                  rationale: hostedAudit.rationale,
-                }
-              : undefined,
-          }
-        : undefined,
+            }
+          : undefined,
+        audit_agent: hostedAudit
+          ? {
+              agent_id: actors.meshactionAuditAgent.id,
+              model: hostedAudit.model,
+              decision: hostedAudit.decision,
+              rationale: hostedAudit.rationale,
+            }
+          : undefined,
+      },
       byo_agent: byoInvocation
         ? {
             agent_id: byoInvocation.agent.agent_id,
@@ -2026,6 +2058,7 @@ export async function evaluateTrace(input: {
     throw new Error("Trace proposal is required before policy evaluation");
   }
 
+  await assertProtocolReadyForAnchor();
   const policy = buildPolicy(run.semantic_type, input.confirmed === true);
   const previousEventHash = await latestEventHash(run.session_id);
   const { decision, envelope } = await suimeshClient().policy.evaluateAndRecord({
@@ -2040,7 +2073,6 @@ export async function evaluateTrace(input: {
   let anchor: ActionAnchor | undefined;
   let status = statusFromDecision(decision);
   if (decision.decision === "approved") {
-    await assertProtocolReadyForAnchor();
     const proposalHash = await latestTraceEventHash(
       input.traceId,
       "decision.sui_ptb_action.v1"
@@ -2131,17 +2163,26 @@ export async function executeTrace(input: {
     ...actors.executor,
     address: currentExecutorAddress,
   };
-  const claimRecorded = await suimeshClient().trace.claimAndRecord({
-    sessionId: run.session_id,
-    traceId: input.traceId,
-    actor: executor,
-    actionHash: run.inspection.facts.actionHash,
-    decision: run.decision,
-    claimant: currentExecutorAddress,
-    claimLeaseMs: CLAIM_LEASE_MS,
-    previousEventHash: await latestEventHash(run.session_id),
-  });
-  if (!claimRecorded.claim.claimed || claimRecorded.claim.duplicate) {
+  let claim = run.claim;
+  let previousEventHash = await latestEventHash(run.session_id);
+  if (!claimReusableByExecutor(claim, currentExecutorAddress)) {
+    const claimRecorded = await suimeshClient().trace.claimAndRecord({
+      sessionId: run.session_id,
+      traceId: input.traceId,
+      actor: executor,
+      actionHash: run.inspection.facts.actionHash,
+      decision: run.decision,
+      claimant: currentExecutorAddress,
+      claimLeaseMs: CLAIM_LEASE_MS,
+      previousEventHash,
+    });
+    if (!claimRecorded.claim.claimed || claimRecorded.claim.duplicate) {
+      throw new Error("successful non-duplicate ActionClaim is required before execution");
+    }
+    claim = claimRecorded.claim;
+    previousEventHash = claimRecorded.envelope.eventHash;
+  }
+  if (!claim) {
     throw new Error("successful non-duplicate ActionClaim is required before execution");
   }
 
@@ -2155,7 +2196,7 @@ export async function executeTrace(input: {
     inspection: run.inspection,
     decision: run.decision,
     anchor: run.anchor ?? undefined,
-    claim: claimRecorded.claim,
+    claim,
     status: "claimed",
   });
 
@@ -2163,10 +2204,10 @@ export async function executeTrace(input: {
     sessionId: run.session_id,
     traceId: input.traceId,
     actionHash: run.inspection.facts.actionHash,
-    claim: claimRecorded.claim,
+    claim,
     decision: run.decision,
     executor,
-    previousEventHash: claimRecorded.envelope.eventHash,
+    previousEventHash,
     execute: async () =>
       executeSuiPtbBytes(ptbBytesFromBase64Url(approvedAction.ptbBytes)),
   });
@@ -2188,7 +2229,7 @@ export async function executeTrace(input: {
     inspection: run.inspection,
     decision: run.decision,
     anchor: completedAnchor,
-    claim: claimRecorded.claim,
+    claim,
     receipt,
     status: "executed",
   });
@@ -2203,7 +2244,7 @@ export async function executeTrace(input: {
           inspection: run.inspection,
           decision: run.decision,
           anchor: completedAnchor,
-          claim: claimRecorded.claim,
+          claim,
           receipt: executed.receipt,
         })
       ),
@@ -2254,7 +2295,7 @@ export async function executeTrace(input: {
       inspection: run.inspection,
       decision: run.decision,
       anchor: completedAnchor,
-      claim: claimRecorded.claim,
+      claim,
       receipt,
       status: "executed",
     });
@@ -2296,7 +2337,7 @@ export async function executeTrace(input: {
       inspection: run.inspection,
       decision: run.decision,
       anchor: completedAnchor,
-      claim: claimRecorded.claim,
+      claim,
       receipt,
       status: "executed",
     });
@@ -2305,7 +2346,7 @@ export async function executeTrace(input: {
   return {
     trace_id: input.traceId,
     session_id: run.session_id,
-    claim: claimRecorded.claim,
+    claim,
     receipt,
   };
 }

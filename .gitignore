@@ -37,6 +37,7 @@ CLAUDE.md
 
 # local SDK checkout alias
 .suimesh-sdk
+/vendor/suimesh/
 
 # local Sui wallets and CLI state
 /.sui/

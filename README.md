@@ -83,7 +83,7 @@ Sessions are created only when work starts. Verified BYO agents are never select
 Install dependencies:
 
 ```bash
-bun install
+npm install
 ```
 
 Create an environment file:
@@ -92,11 +92,13 @@ Create an environment file:
 cp .env.example .env.local
 ```
 
-Point the SDK alias at a local SuiMesh SDK checkout, or update `tsconfig.json` and `next.config.ts` to use your own SDK source path:
+MeshAction now consumes the published `suimesh` package directly from npm. To upgrade the SDK, use your package manager normally:
 
 ```bash
-ln -s /path/to/suimesh .suimesh-sdk
+npm i suimesh@latest
 ```
+
+The app still uses Bun to run local scripts. If you also keep a sibling `../suimesh` checkout, `bun install` can materialize `node_modules/suimesh` as a symlinked local package that Turbopack rejects. MeshAction now runs a preflight repair step before `dev`, `build`, `start`, and `test` to replace that install with the published npm package automatically.
 
 Set the required runtime values:
 
@@ -111,6 +113,18 @@ SUIMESH_SUI_PRIVATE_KEY=suiprivkey...
 SUIMESH_SUI_ADDRESS=0x...
 ```
 
+Apply database migrations:
+
+```bash
+bun run db:migrate
+```
+
+Bootstrap a MeshAction-owned trace registry if you do not already have one:
+
+```bash
+bun run bootstrap:trace-registry -- --create
+```
+
 Start the console:
 
 ```bash
@@ -120,9 +134,12 @@ bun run dev
 Run the standard checks:
 
 ```bash
+bun run deploy:check
 bun run lint
 bun run build
 ```
+
+`bun run db:migrate`, `bun run bootstrap:trace-registry`, `bun run deploy:check`, and `bun run smoke:e2e` automatically read `.env.local` and `.env` when those files exist. Explicit shell environment variables still win.
 
 ## Configuration
 
@@ -172,6 +189,23 @@ MESHACTION_LLM_BASE_URL=https://api.openai.com/v1
 Compatibility aliases are accepted: `OPENAI_API_KEY`, `OPENAI_MODEL`, `OPENAI_BASE_URL`, `SUIMESH_LLM_*`, and `SUIMESH_OPENAI_*`.
 
 If your network requires a proxy, configure the standard `HTTPS_PROXY`, `HTTP_PROXY`, or `ALL_PROXY` environment variables before running the app or tests.
+
+If `MESHACTION_LLM_AGENTS` is unset or false, hosted proposal and audit agents stay available in deterministic mode. `/runtime/status` and the console inspector expose whether the app is using a real LLM provider or deterministic fallback.
+
+### API Throttling
+
+Wallet sign-in and public BYO registration routes have conservative rate limits enabled by default:
+
+```bash
+MESHACTION_AUTH_CHALLENGE_LIMIT=5
+MESHACTION_AUTH_CHALLENGE_WINDOW_MS=300000
+MESHACTION_AUTH_SESSION_LIMIT=10
+MESHACTION_AUTH_SESSION_WINDOW_MS=300000
+MESHACTION_AGENT_REGISTRATION_LIMIT=8
+MESHACTION_AGENT_REGISTRATION_WINDOW_MS=600000
+```
+
+Tune them per deployment if you expect heavier traffic or stricter abuse controls.
 
 ### Walrus And Seal
 
@@ -231,6 +265,8 @@ SUIMESH_ALLOW_INSECURE_BYO_HTTP=true
 SUIMESH_ALLOW_LOCAL_BYO_ENDPOINTS=true
 ```
 
+The end-to-end smoke flow spins up a loopback BYO agent on `127.0.0.1`, so these two flags must be enabled on the MeshAction server for local smoke runs.
+
 ## API
 
 | Method | Route |
@@ -262,6 +298,8 @@ SUIMESH_PROTOCOL_MODE=canonical \
 SUIMESH_RELAYER_URL=https://relay.suimesh.link \
 SUIMESH_TRACE_PACKAGE_ID=0x038caadb65def30619e6ec762715ea6ca232ac1195bc077086bc9a6b7e11bb80 \
 SUIMESH_TRACE_REGISTRY_ID=0x_YOUR_MESHACTION_TRACE_REGISTRY_ID \
+SUIMESH_ALLOW_INSECURE_BYO_HTTP=true \
+SUIMESH_ALLOW_LOCAL_BYO_ENDPOINTS=true \
 bun run smoke:e2e
 ```
 

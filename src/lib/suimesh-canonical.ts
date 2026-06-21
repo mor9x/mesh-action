@@ -10,7 +10,7 @@ import {
   type SuiMoveTraceGuardEventQueryInput,
   type SuiMoveTraceGuardTransactionResult,
   type TraceGuard,
-} from "@suimesh/sdk";
+} from "suimesh";
 
 import {
   PgEventTransport,
