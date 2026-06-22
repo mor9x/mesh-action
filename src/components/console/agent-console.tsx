@@ -1036,6 +1036,7 @@ export function AgentConsole() {
         session_id: runtime.sessionId,
         semantic_type: activeAction,
         byo_agent_id: activeByoAgentId,
+        force_reprepare: true,
       });
       setTraceRestorable(true);
       applyRuntimeTraceState(await refreshTrace(runtime.traceId));

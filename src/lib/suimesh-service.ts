@@ -482,6 +482,7 @@ async function upsertRun(input: {
   claim?: ActionClaim;
   receipt?: ExecutionReceipt;
   status: string;
+  resetWorkflowState?: boolean;
 }) {
   await query(
     `
@@ -504,13 +505,34 @@ async function upsertRun(input: {
       set session_id = excluded.session_id,
           owner_user_id = excluded.owner_user_id,
           semantic_type = excluded.semantic_type,
-          action_hash = coalesce(excluded.action_hash, suimesh_trace_runs.action_hash),
-          action = coalesce(excluded.action, suimesh_trace_runs.action),
-          inspection = coalesce(excluded.inspection, suimesh_trace_runs.inspection),
-          decision = coalesce(excluded.decision, suimesh_trace_runs.decision),
-          anchor = coalesce(excluded.anchor, suimesh_trace_runs.anchor),
-          claim = coalesce(excluded.claim, suimesh_trace_runs.claim),
-          receipt = coalesce(excluded.receipt, suimesh_trace_runs.receipt),
+          action_hash = case
+            when $13 then excluded.action_hash
+            else coalesce(excluded.action_hash, suimesh_trace_runs.action_hash)
+          end,
+          action = case
+            when $13 then excluded.action
+            else coalesce(excluded.action, suimesh_trace_runs.action)
+          end,
+          inspection = case
+            when $13 then excluded.inspection
+            else coalesce(excluded.inspection, suimesh_trace_runs.inspection)
+          end,
+          decision = case
+            when $13 then excluded.decision
+            else coalesce(excluded.decision, suimesh_trace_runs.decision)
+          end,
+          anchor = case
+            when $13 then excluded.anchor
+            else coalesce(excluded.anchor, suimesh_trace_runs.anchor)
+          end,
+          claim = case
+            when $13 then excluded.claim
+            else coalesce(excluded.claim, suimesh_trace_runs.claim)
+          end,
+          receipt = case
+            when $13 then excluded.receipt
+            else coalesce(excluded.receipt, suimesh_trace_runs.receipt)
+          end,
           status = excluded.status,
           updated_at = now()
       where suimesh_trace_runs.owner_user_id = excluded.owner_user_id
@@ -528,6 +550,7 @@ async function upsertRun(input: {
       input.claim ? JSON.stringify(input.claim) : null,
       input.receipt ? JSON.stringify(input.receipt) : null,
       input.status,
+      input.resetWorkflowState === true,
     ]
   );
 }
@@ -979,10 +1002,12 @@ async function buildActionPlan(
     copySource?: CopyTradeSource;
     byoInvocation?: VerifiedByoAgentInvocation;
     hostedProposal?: HostedProposalAgentResult;
+    proposalSeed?: string;
   } = {}
 ): Promise<ActionPlan> {
   const nowMs = Date.now();
   const expiresAtMs = nowMs + ACTION_TTL_MS;
+  const proposalSeed = input.proposalSeed ?? traceId;
 
   if (actionType === "transfer") {
     const proposal =
@@ -1019,7 +1044,7 @@ async function buildActionPlan(
           "expiration_check",
         ],
         expiresAtMs,
-        idempotencyKey: `transfer:${traceId}`,
+        idempotencyKey: `transfer:${traceId}:${proposalSeed}`,
       },
       proposal,
       hostedProposal: input.hostedProposal,
@@ -1062,7 +1087,7 @@ async function buildActionPlan(
           "expiration_check",
         ],
         expiresAtMs,
-        idempotencyKey: `move_call:${traceId}`,
+        idempotencyKey: `move_call:${traceId}:${proposalSeed}`,
       },
       proposal,
       hostedProposal: input.hostedProposal,
@@ -1118,7 +1143,7 @@ async function buildActionPlan(
         "expiration_check",
       ],
       expiresAtMs,
-      idempotencyKey: `copy_trade:${traceId}`,
+      idempotencyKey: `copy_trade:${traceId}:${proposalSeed}`,
     },
     proposal: copyProposal,
     hostedProposal: input.hostedProposal,
@@ -1717,6 +1742,7 @@ export async function postSessionMessage(input: {
       ownerUserId: input.ownerUserId,
       semanticType: actionType,
       byoAgentId: input.byoAgentId,
+      forceReprepare: true,
     });
     evaluationResult = await evaluateTrace({
       traceId,
@@ -1845,6 +1871,7 @@ export async function proposeTrace(input: {
   sessionId?: string;
   semanticType?: unknown;
   byoAgentId?: unknown;
+  forceReprepare?: boolean;
 }) {
   const actionType = resolveActionType(input.semanticType);
   const sessionId =
@@ -1852,7 +1879,7 @@ export async function proposeTrace(input: {
     (await sessionIdForTrace(input.traceId, actionType, input.ownerUserId));
   const existing = await getRun(input.traceId);
   assertRunOwner(existing, input.ownerUserId);
-  if (existing?.action && existing.inspection) {
+  if (!input.forceReprepare && existing?.action && existing.inspection) {
     return {
       trace_id: input.traceId,
       session_id: existing.session_id,
@@ -1873,6 +1900,7 @@ export async function proposeTrace(input: {
       ? await ensureCopyTradeLeaderSource(sessionId, input.ownerUserId)
       : undefined;
   let previousEventHash = await latestEventHash(sessionId);
+  const proposalSeed = previousEventHash ?? `seed:${input.traceId}`;
   const userIntent =
     (await latestUserContent(sessionId)) ?? actionDefinitions[actionType].objective;
   const intentEvent = await recordProtocolJsonEvent({
@@ -1881,7 +1909,7 @@ export async function proposeTrace(input: {
     eventType: EventTypes.Intent,
     actor: actors.user,
     previousEventHash,
-    idempotencyKey: `intent:${input.traceId}`,
+    idempotencyKey: `intent:${input.traceId}:${proposalSeed}`,
     payload: {
       trace_id: input.traceId,
       semantic_type: actionType,
@@ -1913,7 +1941,7 @@ export async function proposeTrace(input: {
       eventType: EventTypes.Proposal,
       actor: actors.meshactionProposalAgent,
       previousEventHash,
-      idempotencyKey: `meshaction-proposal:${input.traceId}`,
+      idempotencyKey: `meshaction-proposal:${input.traceId}:${proposalSeed}`,
       payload: {
         kind: "hosted_agent_proposal",
         trace_id: input.traceId,
@@ -1941,6 +1969,7 @@ export async function proposeTrace(input: {
     copySource,
     byoInvocation,
     hostedProposal,
+    proposalSeed,
   });
   if (byoInvocation) {
     const byoEvent = await suimeshClient().light.sendMessage({
@@ -1994,6 +2023,7 @@ export async function proposeTrace(input: {
     action: proposed.action,
     inspection,
     status: "simulated",
+    resetWorkflowState: true,
   });
 
   return {

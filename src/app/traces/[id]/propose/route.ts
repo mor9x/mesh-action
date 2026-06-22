@@ -18,6 +18,7 @@ export async function POST(request: Request, { params }: Params) {
     semantic_type?: unknown;
     session_id?: string;
     byo_agent_id?: string;
+    force_reprepare?: boolean;
   };
   try {
     const user = await requireAuth();
@@ -27,6 +28,7 @@ export async function POST(request: Request, { params }: Params) {
       sessionId: body.session_id,
       semanticType: body.semantic_type,
       byoAgentId: body.byo_agent_id,
+      forceReprepare: body.force_reprepare === true,
     });
 
     return Response.json(result, { status: 201 });
