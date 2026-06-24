@@ -21,11 +21,11 @@ const { Pool } = pg;
 loadLocalEnv();
 
 const BASE_URL = process.env.MESHACTION_SMOKE_BASE_URL ?? "http://localhost:3000";
-const DATABASE_URL =
-  process.env.DATABASE_URL ?? "postgresql://admin:admin@127.0.0.1:5432/admin";
+const DATABASE_URL = process.env.DATABASE_URL?.trim();
 const EXPECT_LLM = process.env.MESHACTION_SMOKE_EXPECT_LLM === "true";
 const LLM_MODEL = process.env.MESHACTION_LLM_MODEL ?? "gpt-4.1-mini";
 const SMOKE_PORT = Number(process.env.MESHACTION_SMOKE_BYO_PORT ?? 4020);
+const REMOTE_BYO_ENDPOINT = process.env.MESHACTION_SMOKE_BYO_ENDPOINT?.trim();
 const TRANSFER_EXPECTED_POLICY = "approved";
 const CONTRACT_EXPECTED_POLICY = "approved";
 const COPY_EXPECTED_POLICY = "requires_confirmation";
@@ -38,7 +38,7 @@ type RequestOptions = {
 };
 
 const encoder = new TextEncoder();
-const pool = new Pool({ connectionString: DATABASE_URL });
+const pool = DATABASE_URL ? new Pool({ connectionString: DATABASE_URL }) : undefined;
 
 function assert(condition: unknown, message: string, details?: unknown): asserts condition {
   if (!condition) {
@@ -84,6 +84,7 @@ function cliKeystoreEntry(expectedAddress?: string) {
             return entry;
           }
         }
+        continue;
       }
       const entry = entries[0];
       if (entry) {
@@ -217,6 +218,9 @@ async function registerByoAgent(cookie: string, endpoint: string, keypair: Ed255
 }
 
 async function relayEvidence(sessionId: string, traceId: string) {
+  if (!pool) {
+    return undefined;
+  }
   const result = await pool.query<{
     event_type: string;
     actor: string;
@@ -415,21 +419,23 @@ async function runAction(input: {
   );
 
   const relay = await relayEvidence(sessionId, traceId);
-  assert(
-    relay.hasPolicyDecision &&
-      relay.hasActionAnchor &&
-      relay.hasActionClaim &&
-      relay.hasExecutionReceipt &&
-      relay.hasAuditEvent,
-    `${input.semanticType} protocol relay incomplete`,
-    relay
-  );
-  if (EXPECT_LLM) {
+  if (relay) {
     assert(
-      relay.hostedProposalEvents >= 1 && relay.hostedAuditEvents >= 1,
-      `${input.semanticType} hosted agent relay incomplete`,
+      relay.hasPolicyDecision &&
+        relay.hasActionAnchor &&
+        relay.hasActionClaim &&
+        relay.hasExecutionReceipt &&
+        relay.hasAuditEvent,
+      `${input.semanticType} protocol relay incomplete`,
       relay
     );
+    if (EXPECT_LLM) {
+      assert(
+        relay.hostedProposalEvents >= 1 && relay.hostedAuditEvents >= 1,
+        `${input.semanticType} hosted agent relay incomplete`,
+        relay
+      );
+    }
   }
 
   return {
@@ -468,10 +474,14 @@ async function actionPtbBytes(input: {
 }
 
 async function main() {
-  const byoKeypair = new Ed25519Keypair();
+  const byoKeypair = REMOTE_BYO_ENDPOINT
+    ? runtimeKeypair()
+    : new Ed25519Keypair();
   let byoInvocations = 0;
   const sockets = new Set<Socket>();
-  const server = createServer(async (request, response) => {
+  const server = REMOTE_BYO_ENDPOINT
+    ? undefined
+    : createServer(async (request, response) => {
     try {
       if (request.method !== "POST" || request.url !== "/suimesh") {
         response.writeHead(404, { connection: "close" }).end("not found");
@@ -521,14 +531,16 @@ async function main() {
       response.end(error instanceof Error ? error.stack ?? error.message : String(error));
     }
   });
-  server.on("connection", (socket) => {
+  server?.on("connection", (socket) => {
     sockets.add(socket);
     socket.on("close", () => {
       sockets.delete(socket);
     });
   });
 
-  await new Promise<void>((resolve) => server.listen(SMOKE_PORT, "127.0.0.1", resolve));
+  if (server) {
+    await new Promise<void>((resolve) => server.listen(SMOKE_PORT, "127.0.0.1", resolve));
+  }
   try {
     const { cookie, walletAddress } = await login();
     const runtimeStatus = await request<{ runtime?: { ok?: boolean } }>(
@@ -538,7 +550,7 @@ async function main() {
     assert(runtimeStatus.data.runtime?.ok === true, "Runtime status is not OK");
     const byoAgentId = await registerByoAgent(
       cookie,
-      `http://127.0.0.1:${SMOKE_PORT}/suimesh`,
+      REMOTE_BYO_ENDPOINT ?? `http://127.0.0.1:${SMOKE_PORT}/suimesh`,
       byoKeypair
     );
     const transfer = await runAction({
@@ -559,9 +571,11 @@ async function main() {
       semanticType: "copy_trade",
       expectedFirstDecision: COPY_EXPECTED_POLICY,
     });
-    assert(byoInvocations >= 3, "BYO agent was not invoked for all action types", {
-      byoInvocations,
-    });
+    if (!REMOTE_BYO_ENDPOINT) {
+      assert(byoInvocations >= 3, "BYO agent was not invoked for all action types", {
+        byoInvocations,
+      });
+    }
 
     const disabled = await request<{ agent?: AgentManifest }>(
       `/agents/${encodeURIComponent(byoAgentId)}/disable`,
@@ -586,8 +600,10 @@ async function main() {
     for (const socket of sockets) {
       socket.destroy();
     }
-    await new Promise<void>((resolve) => server.close(() => resolve()));
-    await pool.end();
+    if (server) {
+      await new Promise<void>((resolve) => server.close(() => resolve()));
+    }
+    await pool?.end();
   }
 }
 

@@ -175,7 +175,12 @@ type RuntimeTrace = {
     };
   };
   policy_decision?: {
+    status?: "approved" | "rejected" | "requires_confirmation";
     decision?: string;
+    decision_payload?: {
+      decision?: "approved" | "rejected" | "requires_confirmation";
+      reason?: string;
+    };
     reason?: string;
   };
   receipt?: ExecuteApiResponse["receipt"] & {
@@ -335,6 +340,46 @@ function encodePersonalMessage(message: string) {
 function normalizeAddressForMessage(address: string) {
   const trimmed = address.trim();
   return isValidSuiAddress(trimmed) ? normalizeSuiAddress(trimmed) : trimmed;
+}
+
+function tracePolicyDecisionValue(
+  trace: RuntimeTrace | undefined
+): "approved" | "rejected" | "requires_confirmation" | undefined {
+  const decision = trace?.policy_decision;
+  if (decision?.status) {
+    return decision.status;
+  }
+  if (
+    decision?.decision === "approved" ||
+    decision?.decision === "rejected" ||
+    decision?.decision === "requires_confirmation"
+  ) {
+    return decision.decision;
+  }
+  if (decision?.decision_payload?.decision) {
+    return decision.decision_payload.decision;
+  }
+  if (
+    trace?.status === "policy_approved" ||
+    trace?.status === "policy_rejected" ||
+    trace?.status === "requires_confirmation"
+  ) {
+    if (trace.status === "policy_approved") {
+      return "approved";
+    }
+    if (trace.status === "policy_rejected") {
+      return "rejected";
+    }
+    return "requires_confirmation";
+  }
+  return undefined;
+}
+
+function tracePolicyReason(trace: RuntimeTrace | undefined) {
+  return (
+    trace?.policy_decision?.reason ??
+    trace?.policy_decision?.decision_payload?.reason
+  );
 }
 
 function buildByoRegistrationMessage(input: {
@@ -497,9 +542,8 @@ export function AgentConsole() {
   const highRiskExecutionReviewRequired =
     activeAction === "copy_trade" && !executed;
   const hasInspectedAction = Boolean(runtimeTrace?.action && runtimeTrace.action_hash);
-  const policyRequiresConfirmation =
-    runtimeTrace?.policy_decision?.decision === "requires_confirmation" ||
-    runtimeTrace?.status === "requires_confirmation";
+  const currentPolicyDecision = tracePolicyDecisionValue(runtimeTrace);
+  const policyRequiresConfirmation = currentPolicyDecision === "requires_confirmation";
   const showExecutionReview =
     highRiskExecutionReviewRequired &&
     (executionReviewOpen || policyRequiresConfirmation);
@@ -536,8 +580,8 @@ export function AgentConsole() {
       ? "amber"
       : executed || runtimeTrace?.status === "executed"
       ? "green"
-      : runtimeTrace?.status === "policy_rejected" ||
-          runtimeTrace?.status === "requires_confirmation"
+      : currentPolicyDecision === "rejected" ||
+          currentPolicyDecision === "requires_confirmation"
         ? "amber"
         : simulated || runtimeTrace
           ? "blue"
@@ -818,8 +862,27 @@ export function AgentConsole() {
     }
 
     setActiveAction(next);
+    setSelectedNodeId("node_agent");
+    setSimulated(false);
+    setExecuted(false);
+    setSessionId(undefined);
+    setTraceId(undefined);
+    setTraceRestorable(false);
+    setRuntimeGraph(undefined);
+    setRuntimeTrace(undefined);
     setExecutionReviewOpen(false);
     setExecutionConfirmationAccepted(false);
+    setPolicyApproved(false);
+    setSessionError(undefined);
+    setDraft("");
+    setMessages([
+      runtimeNoticeMessage(
+        next,
+        authUser
+          ? "Workspace ready. Simulate or send a message to start a session."
+          : "Sign in with a Sui wallet before creating a MeshAction session."
+      ),
+    ]);
     setSessionBootRequest({ action: next, key: Date.now() });
   }
 
@@ -894,6 +957,7 @@ export function AgentConsole() {
 
   function applyRuntimeTraceState(trace: RuntimeTrace | undefined) {
     const status = trace?.status;
+    const decision = tracePolicyDecisionValue(trace);
     setSimulated(Boolean(trace));
     setExecuted(status === "executed");
     setPolicyApproved(
@@ -901,7 +965,7 @@ export function AgentConsole() {
         status === "claimed" ||
         status === "anchored" ||
         status === "executed" ||
-        trace?.policy_decision?.decision === "approved"
+        decision === "approved"
     );
   }
 
@@ -999,8 +1063,7 @@ export function AgentConsole() {
         setRuntimeTrace(result.trace);
         applyRuntimeTraceState(result.trace);
         setExecutionReviewOpen(
-          result.trace.status === "requires_confirmation" ||
-            result.trace.policy_decision?.decision === "requires_confirmation"
+          tracePolicyDecisionValue(result.trace) === "requires_confirmation"
         );
       } else {
         setSimulated(false);
@@ -1055,8 +1118,7 @@ export function AgentConsole() {
       const refreshedTrace = await refreshTrace(runtime.traceId);
       applyRuntimeTraceState(refreshedTrace);
       setExecutionReviewOpen(
-        refreshedTrace?.status === "requires_confirmation" ||
-          refreshedTrace?.policy_decision?.decision === "requires_confirmation"
+        tracePolicyDecisionValue(refreshedTrace) === "requires_confirmation"
       );
       await refreshGraph(runtime.sessionId);
       await loadSessionIndex().catch(() => undefined);
@@ -1336,7 +1398,7 @@ export function AgentConsole() {
                   value={
                     policyApproved
                       ? "approved"
-                      : runtimeTrace?.policy_decision?.decision ?? "awaiting"
+                      : currentPolicyDecision ?? "awaiting"
                   }
                 />
                 <StageCell
@@ -1853,9 +1915,9 @@ function ExecutionReviewPanel({
         .filter(Boolean)
         .join("::")
     : "pending inspected target";
-  const policyDecision = trace?.policy_decision?.decision ?? "simulation required";
+  const policyDecision = tracePolicyDecisionValue(trace) ?? "simulation required";
   const policyReason =
-    trace?.policy_decision?.reason ??
+    tracePolicyReason(trace) ??
     "Run simulation to inspect the PTB before confirming execution.";
   const valueAtRisk = formatValueAtRisk(manifest?.valueAtRisk);
   const summary =
